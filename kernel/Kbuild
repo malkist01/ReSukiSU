@@ -105,6 +105,17 @@ KSU_TP_HOOK := y
 $(info -- $(REPO_NAME): using KSU_TRACEPOINT_HOOK)
 endif
 
+ifeq ($(CONFIG_KSU_MANUAL_HOOK), y)
+HAVE_KSU_HOOK := $(shell grep -q "ksu_handle_sys_reboot" $(srctree)/kernel/reboot.c && echo 0 || echo 1)
+ifeq ($(HAVE_KSU_HOOK),0)
+$(info -- ResukiSU: Hook mode: Manual)
+endif
+endif
+
+ifneq ($(HAVE_KSU_HOOK),0)
+$(error -- ReSukiSU: No hooks were defined, please integrate manual hooks in your kernel!)
+endif
+
 KERNEL_VERSION := $(VERSION).$(PATCHLEVEL)
 KERNEL_TYPE := Non-GKI
 # Check for GKI 2.0 (5.10+ or 6.x+)
