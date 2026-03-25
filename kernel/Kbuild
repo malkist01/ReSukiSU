@@ -85,11 +85,14 @@ KSU_VERSION_FULL := $(subst %KSU_VERSION%,$(KSU_VERSION),$(KSU_VERSION_FULL))
 $(info -- $(REPO_NAME) version code: $(KSU_VERSION))
 $(info -- $(REPO_NAME) version name: $(KSU_VERSION_FULL))
 
+KSU_VERSION_TAG :=$(KSU_VERSION)
+
+ccflags-y += -DKSU_VERSION_TAG=\"$(KSU_VERSION_TAG)
 ccflags-y += -DKSU_VERSION=$(KSU_VERSION)
 ccflags-y += -DKSU_VERSION_FULL=\"$(KSU_VERSION_FULL)\"
 
 ifeq ($(CONFIG_KSU_MULTI_MANAGER_SUPPORT), y)
-$(info -- Supported Unofficial Manager: MKSU, MAMBOSU, NEXT,ENJOY, RKSU, KOWSU, SukiSU-Ultra, ReSukiSU )
+$(info -- Supported Unofficial Manager: MKSU, RKSU, KOWSU, SukiSU-Ultra, ReSukiSU )
 endif
 
 ifeq ($(CONFIG_KSU_MANUAL_HOOK), y)
@@ -100,17 +103,6 @@ else
 ccflags-y += -DKSU_TP_HOOK
 KSU_TP_HOOK := y
 $(info -- $(REPO_NAME): using KSU_TRACEPOINT_HOOK)
-endif
-
-ifeq ($(CONFIG_KSU_MANUAL_HOOK), y)
-HAVE_KSU_HOOK := $(shell grep -q "ksu_handle_sys_reboot" $(srctree)/kernel/reboot.c && echo 0 || echo 1)
-ifeq ($(HAVE_KSU_HOOK),0)
-$(info -- ResukiSU: Hook mode: Manual)
-endif
-endif
-
-ifneq ($(HAVE_KSU_HOOK),0)
-$(error -- ReSukiSU: No hooks were defined, please integrate manual hooks in your kernel!)
 endif
 
 KERNEL_VERSION := $(VERSION).$(PATCHLEVEL)

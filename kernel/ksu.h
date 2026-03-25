@@ -5,6 +5,7 @@
 #include <linux/cred.h>
 
 #define KERNEL_SU_VERSION KSU_VERSION
+#define KERNEL_SU_VERSION_TAG KSU_VERSION_TAG
 #define KERNEL_SU_OPTION 0xDEADBEEF
 
 #define EVENT_POST_FS_DATA 1
@@ -16,7 +17,6 @@
 #define KSU_VERSION_FULL "v3.x-00000000@unknown"
 #endif
 #define KSU_FULL_VERSION_STRING 255
-#define KERNEL_SU_VERSION_TAG KSU_VERSION_TAG
 
 void ksu_lsm_hook_init(void);
 
