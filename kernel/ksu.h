@@ -5,7 +5,6 @@
 #include <linux/cred.h>
 
 #define KERNEL_SU_VERSION KSU_VERSION
-#define KERNEL_SU_VERSION_TAG KSU_VERSION_TAG
 #define KERNEL_SU_OPTION 0xDEADBEEF
 
 #define EVENT_POST_FS_DATA 1
