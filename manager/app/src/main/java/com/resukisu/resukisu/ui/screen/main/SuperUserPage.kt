@@ -106,10 +106,6 @@ import com.resukisu.resukisu.ui.viewmodel.SuperUserViewModel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
-enum class AppPriority(val value: Int) {
-    ROOT(1), CUSTOM(2), DEFAULT(3)
-}
-
 data class BottomSheetMenuItem(
     val icon: ImageVector,
     val titleRes: Int,
@@ -139,56 +135,6 @@ fun SuperUserPage(bottomPadding: Dp) {
 
     LaunchedEffect(Unit) {
         viewModel.search = ""
-    }
-
-    val filteredAndSortedAppGroups = remember(
-        viewModel.appGroupList,
-        viewModel.selectedCategory,
-        viewModel.currentSortType,
-        viewModel.search,
-        viewModel.showSystemApps
-    ) {
-        var groups = viewModel.appGroupList
-
-        // 按分类筛选
-        groups = when (viewModel.selectedCategory) {
-            AppCategory.ALL -> groups
-            AppCategory.ROOT -> groups.filter { it.allowSu }
-            AppCategory.CUSTOM -> groups.filter { !it.allowSu && it.hasCustomProfile }
-            AppCategory.DEFAULT -> groups.filter { !it.allowSu && !it.hasCustomProfile }
-        }
-
-        // 排序
-        groups.sortedWith { group1, group2 ->
-            val priority1 = when {
-                group1.allowSu -> AppPriority.ROOT
-                group1.hasCustomProfile -> AppPriority.CUSTOM
-                else -> AppPriority.DEFAULT
-            }
-            val priority2 = when {
-                group2.allowSu -> AppPriority.ROOT
-                group2.hasCustomProfile -> AppPriority.CUSTOM
-                else -> AppPriority.DEFAULT
-            }
-
-            val priorityComparison = priority1.value.compareTo(priority2.value)
-            if (priorityComparison != 0) {
-                priorityComparison
-            } else {
-                when (viewModel.currentSortType) {
-                    SortType.NAME_ASC -> group1.mainApp.label.lowercase()
-                        .compareTo(group2.mainApp.label.lowercase())
-                    SortType.NAME_DESC -> group2.mainApp.label.lowercase()
-                        .compareTo(group1.mainApp.label.lowercase())
-                    SortType.INSTALL_TIME_NEW -> group2.mainApp.packageInfo.firstInstallTime
-                        .compareTo(group1.mainApp.packageInfo.firstInstallTime)
-                    SortType.INSTALL_TIME_OLD -> group1.mainApp.packageInfo.firstInstallTime
-                        .compareTo(group2.mainApp.packageInfo.firstInstallTime)
-                    else -> group1.mainApp.label.lowercase()
-                        .compareTo(group2.mainApp.label.lowercase())
-                }
-            }
-        }
     }
 
     val appCounts = remember(viewModel.appGroupList, viewModel.showSystemApps) {
@@ -238,7 +184,7 @@ fun SuperUserPage(bottomPadding: Dp) {
         SuperUserContent(
             innerPadding = innerPadding,
             viewModel = viewModel,
-            filteredAndSortedAppGroups = filteredAndSortedAppGroups,
+            appGroups = viewModel.appGroupList,
             listState = listState,
             scrollBehavior = scrollBehavior,
             scope = scope,
@@ -263,7 +209,7 @@ fun SuperUserPage(bottomPadding: Dp) {
 private fun SuperUserContent(
     innerPadding: PaddingValues,
     viewModel: SuperUserViewModel,
-    filteredAndSortedAppGroups: List<SuperUserViewModel.AppGroup>,
+    appGroups: List<SuperUserViewModel.AppGroup>,
     listState: androidx.compose.foundation.lazy.LazyListState,
     scrollBehavior: TopAppBarScrollBehavior,
     scope: CoroutineScope,
@@ -272,7 +218,7 @@ private fun SuperUserContent(
     val navigator = LocalNavigator.current
     val pullRefreshState = rememberPullToRefreshState()
 
-    if (filteredAndSortedAppGroups.isEmpty()) {
+    if (appGroups.isEmpty()) {
         Box(
             modifier = Modifier.fillMaxSize(),
             contentAlignment = Alignment.Center
@@ -351,17 +297,15 @@ private fun SuperUserContent(
                 Spacer(modifier = Modifier.height(innerPadding.calculateTopPadding()))
             }
             lazySegmentColumn(
-                items = filteredAndSortedAppGroups,
+                items = appGroups,
                 key = { _, appGroup -> "${appGroup.uid}-${appGroup.mainApp.packageName}" },
                 contentType = { _, _ -> "AppGroupItem" }
             ) { _, appGroup ->
                 AppGroupItem(
-                    appGroup = appGroup,
-                    onClick = {
-                        navigator.push(Route.AppProfile(appGroup))
-                    },
-                    viewModel = viewModel
-                )
+                    appGroup = appGroup
+                ) {
+                    navigator.push(Route.AppProfile(appGroup))
+                }
             }
 
             item {
@@ -657,7 +601,6 @@ private fun BottomSheetMenuItemView(menuItem: BottomSheetMenuItem) {
 private fun AppGroupItem(
     appGroup: SuperUserViewModel.AppGroup,
     onClick: () -> Unit,
-    viewModel: SuperUserViewModel,
 ) {
     val mainApp = appGroup.mainApp
 
@@ -696,16 +639,22 @@ private fun AppGroupItem(
                 } else if (!appGroup.allowSu) {
                     LabelText(
                         label = "DEFAULT",
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                        containerColor = MaterialTheme.colorScheme.primaryContainer
                     )
                 }
                 if (appGroup.apps.size > 1) {
                     appGroup.userName?.let {
                         LabelText(
                             label = it,
-                            containerColor = MaterialTheme.colorScheme.primaryContainer,
+                            containerColor = MaterialTheme.colorScheme.secondaryContainer,
                         )
                     }
+                }
+                if (appGroup.isRecentlyInstalled) {
+                    LabelText(
+                        label = stringResource(R.string.recently_installed),
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    )
                 }
             }
         },

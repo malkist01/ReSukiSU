@@ -27,10 +27,8 @@ import com.resukisu.zako.IKsuInterface
 import com.topjohnwu.superuser.Shell
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.asCoroutineDispatcher
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.supervisorScope
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -42,7 +40,8 @@ import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
-import kotlin.coroutines.suspendCoroutine
+
+internal const val RECENTLY_INSTALLED_WINDOW_MILLIS = 60 * 60 * 1000L
 
 enum class AppCategory(val displayNameRes: Int, val persistKey: String) {
     ALL(com.resukisu.resukisu.R.string.category_all_apps, "ALL"),
@@ -91,7 +90,6 @@ class SuperUserViewModel : ViewModel() {
         private const val CORE_POOL_SIZE = 8
         private const val MAX_POOL_SIZE = 16
         private const val KEEP_ALIVE_TIME = 60L
-        private const val BATCH_SIZE = 20
     }
 
     @Immutable
@@ -112,7 +110,8 @@ class SuperUserViewModel : ViewModel() {
     data class AppGroup(
         val uid: Int,
         val apps: List<AppInfo>,
-        val profile: Natives.Profile?
+        val profile: Natives.Profile?,
+
     ) : Parcelable {
         @IgnoredOnParcel
         val mainApp: AppInfo = apps.first()
@@ -124,6 +123,12 @@ class SuperUserViewModel : ViewModel() {
         val userName: String? = Natives.getUserName(uid)
         @IgnoredOnParcel
         val hasCustomProfile : Boolean = profile?.let { if (it.allowSu) !it.rootUseDefault else !it.nonRootUseDefault } ?: false
+
+        @IgnoredOnParcel
+        val isRecentlyInstalled: Boolean = run {
+            val cutoffMillis = System.currentTimeMillis() - RECENTLY_INSTALLED_WINDOW_MILLIS
+            apps.maxOfOrNull { it.packageInfo.firstInstallTime }?.let { it >= cutoffMillis } == true
+        }
     }
 
     private val appProcessingThreadPool = ThreadPoolExecutor(
@@ -186,67 +191,13 @@ class SuperUserViewModel : ViewModel() {
         prefs.edit { putString(KEY_CURRENT_SORT_TYPE, newSortType.persistKey) }
     }
 
-    fun updateAppProfileLocally(packageName: String, updatedProfile: Natives.Profile) {
-        appListMutex.tryLock().let { locked ->
-            if (locked) {
-                try {
-                    apps = apps.map { app ->
-                        if (app.packageName == packageName) {
-                            app.copy(profile = updatedProfile)
-                        } else app
-                    }
-                } finally {
-                    appListMutex.unlock()
-                }
-            }
-        }
-    }
-
-    private fun notifyConfigChange(packageName: String) {
-        configChangeListeners.forEach { listener ->
-            try {
-                listener(packageName)
-            } catch (e: Exception) {
-                Log.e(TAG, "Error notifying config change for $packageName", e)
-            }
-        }
-    }
-
-    suspend fun refreshAppConfigurations() {
-        withContext(appProcessingThreadPool) {
-            supervisorScope {
-                val currentApps = apps.toList()
-                val batches = currentApps.chunked(BATCH_SIZE)
-                loadingProgress = 0f
-
-                val updatedApps = batches.mapIndexed { batchIndex, batch ->
-                    async {
-                        val batchResult = batch.map { app ->
-                            try {
-                                val updatedProfile = Natives.getAppProfile(app.packageName, app.uid)
-                                app.copy(profile = updatedProfile)
-                            } catch (e: Exception) {
-                                Log.e(TAG, "Error refreshing profile for ${app.packageName}", e)
-                                app
-                            }
-                        }
-                        loadingProgress = (batchIndex + 1).toFloat() / batches.size
-                        batchResult
-                    }
-                }.awaitAll().flatten()
-
-                appListMutex.withLock { apps = updatedApps }
-                loadingProgress = 1f
-            }
-        }
-    }
-
     private suspend fun connectKsuService(onDisconnect: () -> Unit = {}): IBinder? =
-        suspendCoroutine { continuation ->
+        suspendCancellableCoroutine { continuation ->
             val connection = object : ServiceConnection {
                 override fun onServiceDisconnected(name: ComponentName?) {
                     onDisconnect()
                 }
+
                 override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
                     continuation.resume(binder)
                 }
@@ -337,6 +288,48 @@ class SuperUserViewModel : ViewModel() {
         }.filter { group ->
             group.uid == 2000 || showSystemApps ||
                     group.apps.any { it.packageInfo.applicationInfo!!.flags.and(ApplicationInfo.FLAG_SYSTEM) == 0 }
+        }.run {
+            when (selectedCategory) {
+                AppCategory.ALL -> this
+                AppCategory.ROOT -> this.filter { it.allowSu }
+                AppCategory.CUSTOM -> this.filter { !it.allowSu && it.hasCustomProfile }
+                AppCategory.DEFAULT -> this.filter { !it.allowSu && !it.hasCustomProfile }
+            }
+        }.sortedWith { group1, group2 ->
+            val priority1 = when {
+                group1.allowSu -> 0
+                group1.isRecentlyInstalled -> 1
+                group1.hasCustomProfile -> 2
+                else -> 3
+            }
+            val priority2 = when {
+                group2.allowSu -> 0
+                group2.isRecentlyInstalled -> 1
+                group2.hasCustomProfile -> 2
+                else -> 3
+            }
+
+            val priorityComparison = priority1.compareTo(priority2)
+            if (priorityComparison != 0) {
+                priorityComparison
+            } else {
+                when (currentSortType) {
+                    SortType.NAME_ASC -> group1.mainApp.label.lowercase()
+                        .compareTo(group2.mainApp.label.lowercase())
+
+                    SortType.NAME_DESC -> group2.mainApp.label.lowercase()
+                        .compareTo(group1.mainApp.label.lowercase())
+
+                    SortType.INSTALL_TIME_NEW -> group2.mainApp.packageInfo.firstInstallTime
+                        .compareTo(group1.mainApp.packageInfo.firstInstallTime)
+
+                    SortType.INSTALL_TIME_OLD -> group1.mainApp.packageInfo.firstInstallTime
+                        .compareTo(group2.mainApp.packageInfo.firstInstallTime)
+
+                    else -> group1.mainApp.label.lowercase()
+                        .compareTo(group2.mainApp.label.lowercase())
+                }
+            }
         }
     }
 
